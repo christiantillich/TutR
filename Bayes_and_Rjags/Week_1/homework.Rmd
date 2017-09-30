@@ -11,50 +11,118 @@ library(knitr)
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
 ```
 
-# Problem 1
 
-## Setup 
+
+# Setup 
 
 ```{r p1_setup, echo=TRUE, results='hide'}
-#Example 7.10 with slight modifications. 
-data <- list(y=c(10,9,9,8,9.5,7,12,11,8,10.5))
-#INI <- list(list(mu=10,tau=1),list(mu=9, tau=0.1))
 
-#Specifying the JAGS code here. 
-mdl <- textConnection("
-data {n0 <- 0.1}
-model{ 
-  for (i in 1:10) {y[i] ~ dnorm(mu,tau)} 
-  tau ~ dgamma(1,0.01)
-  sigma2 <- 1/tau 
-  sigma <- sqrt(sigma2)
-  mu ~ dnorm(0, n0*tau)
-}")
+code <- list(
+   'data {n0 <- 0.1}'
+  ,'model{ '
+  , 'for (i in 1:10) {y[i] ~ dnorm(mu,tau)} '
+  ,'tau ~ dgamma(1,0.01)'
+  ,'sigma2 <- 1/tau' 
+  ,'sigma <- sqrt(sigma2)'
+  ,'mu ~ dnorm(0, n0*tau)'
+  ,'}'
+  #,sep = '\n'
+)
 
-M <- jags.model(mdl,data=data,n.chains=2,n.adapt=500)
-R <- coda.samples(M,c("mu","sigma","sigma2"),n.iter=25000)
+build.model <- function(
+   jags.program
+  ,data = list(y=c(10,9,9,8,9.5,7,12,11,8,10.5))
+  ,inits = list(list(mu=10,tau=1),list(mu=9, tau=0.1))
+  ,params = c("mu","sigma","sigma2")
+  ,n.iter=25000
+  ,...
+){
+
+  mdl <- textConnection(paste(jags.program, collapse='\n'))
+  
+  M <- jags.model(mdl,data=data, inits = inits, ...) #n.chains=2,n.adapt=500)
+  R <- coda.samples(M,params,n.iter=n.iter)
+  
+  return(R)
+}
+
+show.model <- function(jags.model){
+  summary(jags.model)$statistics %>% as.data.frame() %>% kable %>% print
+  summary(jags.model)$quantiles %>% as.data.frame() %>% kable %>% print
+}
 ```
 
-## Results
+# Problem 1
 
-```{r p1_results}
+```{r p1}
+R <- build.model(code, n.chains=2, n.adapt = 500)
 plot(R)
-summary(R)$statistics %>% as.data.frame() %>% kable
+show.model(R)
 ```
 
 
 # Problem 2
 
-## Setup
-```{r p2_setup}
+```{r p2}
 #Specifying the JAGS code here. 
-mdl <- textConnection("
-data {n0 <- 0.1}
-model{ 
-  for (i in 1:10) {y[i] ~ dnorm(mu,tau)} 
-  tau ~ dgamma(1,0.01)
-  sigma2 <- 1/tau 
-  sigma <- sqrt(sigma2)
-  mu ~ dnorm(0, n0*tau)
-}")
+append(code,'ind.sigma <- step(sigma - 2)',6) %>%
+  build.model(n.chains=2, n.adapt = 500, params = c('mu','sigma','ind.sigma')) %>%
+  show.model
+```
+
+
+# Problem 3
+```{r p3}
+#Specifying the JAGS code here. 
+append(code,'cv <- sigma / mu',6) %>%
+  build.model(n.chains=2, n.adapt = 500, params = c('mu','sigma','cv')) %>%
+  show.model
+```
+
+
+# Problem 4
+```{r p3}
+#Specifying the JAGS code here. 
+append(code,'cv <- sigma / mu',6) %>%
+  append('p.cv.gt <- step(cv - 0.2)', 7) %>% 
+  build.model(n.chains=2, n.adapt = 500, params = c('mu','sigma','cv', 'p.cv.gt')) %>%
+  show.model
+```
+
+# Problem 4
+
+```{r p4}
+new.data <- list(y=c(1,9,9,8,9.5,7,12,11,8,10.5))
+
+add.code <- list(
+   'for (i in 1:10) {'
+  ,'y[i] ~ dnorm(mu, tau)'
+  ,'yrep[i] ~ dnorm(mu, tau)'
+  ,'p.rep.gt[i] <- step(yrep[i] - y[i])'
+  ,'}'
+)
+
+append(code[-3], add.code, 3) %>%
+  build.model(
+     data = new.data
+    ,n.chains=2
+    ,n.adapt = 500
+    ,params = c('mu','sigma','p.rep.gt')
+  ) %>%
+  show.model
+```
+
+
+# Problem 5
+
+```{r p5}
+append(code[-3], add.code, 3) %>%
+  {.[5] <- 'y[i] ~ dt(mu, tau, 4)'; .} %>%
+  build.model(
+     data = new.data
+    ,n.chains = 2
+    ,n.adapt = 500
+    ,params = c('mu','sigma','p.rep.gt')
+  ) %>% 
+  show.model
 ```
