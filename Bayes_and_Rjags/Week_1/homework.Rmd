@@ -8,14 +8,14 @@ output: pdf_document
 ```{r setup, include=FALSE}
 library(rjags)
 library(knitr)
-knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, results="asis")
 ```
 
 
 
 # Setup 
 
-```{r p1_setup, echo=TRUE, results='hide'}
+```{r p1_setup, results='hide'}
 
 code <- list(
    'data {n0 <- 0.1}'
@@ -40,7 +40,7 @@ build.model <- function(
 
   mdl <- textConnection(paste(jags.program, collapse='\n'))
   
-  M <- jags.model(mdl,data=data, inits = inits, ...) #n.chains=2,n.adapt=500)
+  M <- jags.model(mdl,data=data, inits = inits, quiet = TRUE, ...) #n.chains=2,n.adapt=500)
   R <- coda.samples(M,params,n.iter=n.iter)
   
   return(R)
@@ -55,23 +55,26 @@ show.model <- function(jags.model){
 # Problem 1
 
 ```{r p1}
-R <- build.model(code, n.chains=2, n.adapt = 500)
-plot(R)
-show.model(R)
+build.model(code, n.chains=2, n.adapt = 500) %>% 
+  show.model
 ```
+
+The lower point of the 95% confidence interval is 1.125, so below 2. 
 
 
 # Problem 2
 
 ```{r p2}
 #Specifying the JAGS code here. 
-append(code,'ind.sigma <- step(sigma - 2)',6) %>%
-  build.model(n.chains=2, n.adapt = 500, params = c('mu','sigma','ind.sigma')) %>%
+append(code,'pt.sigma.gt <- step(sigma - 2.5)',6) %>%
+  build.model(n.chains=2, n.adapt = 500, params = c('mu','sigma','pt.sigma.gt')) %>%
   show.model
 ```
 
+The posterior probability of sigma > 2.5 is 0.035, so above 0.02. 
 
 # Problem 3
+
 ```{r p3}
 #Specifying the JAGS code here. 
 append(code,'cv <- sigma / mu',6) %>%
@@ -79,9 +82,12 @@ append(code,'cv <- sigma / mu',6) %>%
   show.model
 ```
 
+The 95% confidence interval for the coefficient of variation is [0.120, 0.285], 
+so the upper point is above 0.25. 
 
 # Problem 4
-```{r p3}
+
+```{r p4}
 #Specifying the JAGS code here. 
 append(code,'cv <- sigma / mu',6) %>%
   append('p.cv.gt <- step(cv - 0.2)', 7) %>% 
@@ -89,9 +95,11 @@ append(code,'cv <- sigma / mu',6) %>%
   show.model
 ```
 
-# Problem 4
+The probability of the cv > 0.20 is 27%. So that probability is below 30%. 
 
-```{r p4}
+# Problem 5
+
+```{r p5}
 new.data <- list(y=c(1,9,9,8,9.5,7,12,11,8,10.5))
 
 add.code <- list(
@@ -112,10 +120,15 @@ append(code[-3], add.code, 3) %>%
   show.model
 ```
 
+1) Observation 1 has the highest probability of y_rep > y, at p = 98.7%. 
+2) That probability is over 95%. 
+3) It's a problematic model. Per the model, the probability of recreating the 
+first observation is < 2%. 
 
-# Problem 5
 
-```{r p5}
+# Problem 6
+
+```{r p6}
 append(code[-3], add.code, 3) %>%
   {.[5] <- 'y[i] ~ dt(mu, tau, 4)'; .} %>%
   build.model(
@@ -126,3 +139,10 @@ append(code[-3], add.code, 3) %>%
   ) %>% 
   show.model
 ```
+
+1) Observeration 1 still has the highest probability of y_rep > y, now at p = 
+99.8%
+2) It's still over 95%
+3) The mean went from 8.41 in Problem 5 to 8.91 in Problem 6. But that would
+help explain why the it became less likely to replicate observation 1 despite 
+having the fatter tails (not gonna lie, this still seems counter-intuitive)
