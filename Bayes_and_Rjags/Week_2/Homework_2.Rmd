@@ -1,0 +1,244 @@
+---
+title: "Homework 2"
+author: "Christian Tillich"
+date: "September 30, 2017"
+output: pdf_document
+---
+
+# Problem Setup  
+
+```{r setup, include=FALSE}
+library(rjags)
+library(jagstools)
+library(knitr)
+knitr::opts_chunk$set(warning = FALSE, results="asis")
+```
+
+
+# Linear Reference
+
+```{r linear_setup}
+
+# columns prestige, educ,log2inc,women
+df.prestige <- read.table("../data/prestige.txt",header=T)
+# conventional least squares
+LM <- lm(prestige ~ education + log2inc +women, data=df.prestige)
+LM %>% summary %>% coef %>% kable
+```
+
+
+# Bayesian Comparison
+
+```{r}
+
+# JAGS
+code <- "
+model { 
+  for (i in 1:102) {
+    prestige[i] ~ dnorm(mu[i],tau)
+    e[i] <- prestige[i]-mu[i]
+    mu[i] <- beta[1]+beta[2]*education[i]+beta[3]*log2inc[i]+beta[4]*women[i]
+  }
+  for (j in 1:4) {beta[j] ~ dnorm(0,0.001)}
+  tau ~ dgamma(1,0.001)
+  sig <- 1/sqrt(tau)
+}" %>% strsplit('\n') %>% unlist
+
+
+build.model <- function(
+   model
+  ,data = df.prestige
+  ,inits = list(
+      list(beta=c(0,0,0,0),tau=1)
+     ,list(beta=c(-10,0,0,0),tau=0.1)
+   )
+  ,params = c("beta","sig")
+  ,...
+){
+  M <- jags.model(textConnection(paste(model, collapse="\n")), data=data,inits=inits, quiet=T,...)
+  R <- coda.samples(M,params,n.iter=25000)
+  R
+}
+```
+
+```{r original}
+mdl <- build.model(code, n.chains=2, n.adapt=500)
+
+summary(mdl)$statistics %>% kable
+summary(mdl)$quantiles %>% kable
+plot(mdl)
+gelman.diag(mdl)$psrf %>% as.data.frame %>% kable
+gelman.plot(mdl)
+
+```
+
+
+
+# Question 1
+
+```{r q1, results='asis'}
+code %>% 
+  {.[5] <- "    r[i] <- (prestige[i]-mu[i])/sig"; .} %>%
+  build.model(params = c("r"), n.chains = 2, n.adapt = 500) %>%
+  jagsresults(params="r") %>%
+  as.data.frame %>%
+  filter(mean == max(mean) | mean == min(mean)) %>%
+  kable
+```
+
+Above I show the residual extreme values.
+
+# Question 2
+
+Yes, the 95% confidence interval is bounded at (2.0, 3.1)
+
+# Question 3
+
+```{r q3}
+code %>% 
+  append("  for (j in 1:4) {sig.beta[j] <- step(beta[j])}", 8) %>%
+  build.model(params = c("beta", "sig.beta"), n.chains = 2, n.adapt = 500) %>%
+  summary %>%
+  .$statistics %>%
+  kable
+```
+
+The intercept, education, and income measures all prove significant. The 
+percentage of incombants who are women is not. 
+
+# Question 4
+
+```{r q4}
+code <- "
+model { 
+  for (i in 1:102) {
+    prestige[i] ~ dnorm(mu[i],tau[i])
+    tau[i] <- tau.1*xi[i]
+    xi[i] ~ dgamma(nu.1,nu.1)
+    e[i] <- (prestige[i] - mu[i])*sqrt(xi[i])/sig
+    mu[i] <- beta[1]+beta[2]*education[i]+beta[3]*log2inc[i]+beta[4]*women[i]
+}
+for (j in 1:4) {beta[j] ~ dnorm(0,0.001)}
+tau.1 ~ dgamma(1,0.001)
+nu ~ dexp(0.1)
+nu.1 <- nu/2
+sig <- 1/sqrt(tau.1)}
+" %>% strsplit('\n') %>% unlist
+
+inits = list(
+      list(beta=c(0,0,0,0),tau.1=1, nu=10)
+     ,list(beta=c(-10,0,0,0),tau.1=0.1, nu=1)
+   )
+
+code %>%
+  build.model(params=c("beta","tau.1","nu"),inits=inits,n.chains=2,n.adapt = 500) %>%
+  summary %>% .$statistics %>% kable
+```
+
+The posterior mean is ~17. So above. 
+
+# Question 5
+
+```{r q5}
+code %>%
+  build.model(params=c("sig"),inits=inits,n.chains=2,n.adapt = 500) %>%
+  summary %>% .$statistics %>%
+  kable
+```
+
+The mean of sigma here is ~6.7. The mean of the fully-shared sigma from 2.4.3
+is ~7.1. So it is lower than in the Normal model. 
+
+# Question 6
+
+```{r q6}
+df.salin <- read.table("../data/salin.txt",header=T)
+
+out <- code %>%
+  {.[8] <- "    mu[i] <- beta[1]+beta[2]*lag[i]+beta[3]*trend[i]+beta[4]*dis[i]"; .} %>%
+  gsub("prestige","sal",.) %>% gsub("102","28", .) %>%
+  build.model(
+     data=df.salin
+    ,inits=inits
+    ,n.chains=2
+    ,n.adapt=500
+    ,params = c("beta","tau.1","nu")
+  ) %>%
+  summary %>% .$statistics 
+
+kable(out)
+```
+
+The posterior mean for nu is `r round(out['nu','Mean'],2)`, so below 10. 
+
+# Question 7
+
+```{r q7}
+code %>%
+  {.[8] <- "    mu[i] <- beta[1]+beta[2]*lag[i]+beta[3]*trend[i]+beta[4]*dis[i]"; .} %>%
+  gsub("prestige","sal",.) %>% gsub("102","28", .) %>%
+  build.model(
+     data=df.salin
+    ,inits=list(beta=c(0,0,0,0),tau.1=1, nu=10)
+    ,n.chains=2
+    ,n.adapt=500
+    ,params = c("xi")
+  ) %>%
+  jagsresults("xi") %>%
+  as.data.frame %>%
+  {.[.$mean == min(.$mean), ]} %>%
+  kable
+```
+
+Observation 16
+
+
+# Question 8
+
+```{r q8}
+df.credit <- read.table("../data/creditcard.txt",header=T)
+
+code <- "
+model { 
+  for (i in 1:72) {
+    # Core Model
+    exp[i] ~ dnorm(mu[i],1/sig2[i])
+    sig2[i] <- exp(h[i])
+    e[i] <- (exp[i]-mu[i])/sqrt(sig2[i])
+
+    # Centered Variables
+    age.c[i] <- age[i] - mean(age[])
+    income.c[i] <- income[i] - mean(income[])
+    ownrent.c[i] <- ownrent[i] - mean(ownrent[])
+    incomesq.c[i] <- incomesq[i] - mean(incomesq[])
+
+    # Explanatory Parameters
+    mu[i] <- beta[1] + beta[2]*age.c[i] + beta[3]*income.c[i] + beta[4]*ownrent.c[i] + beta[5]*incomesq.c[i]
+    h[i] <- gam[1] + gam[2]*age.c[i] + gam[3]*income.c[i] + gam[4]*ownrent.c[i] + gam[5]*incomesq.c[i]
+  }
+  for (j in 1:5) {
+    beta[j] ~ dnorm(0,0.001)
+    gam[j] ~ dnorm(0, 0.001)
+  }
+}" %>% strsplit('\n') %>% unlist
+
+inits <- list(
+  list(beta=c(0,0,0,0,0),gam=c(0,0,0,0,0)),
+  list(beta=c(-10,0,0,0,0),gam=c(-1,0,0,0,0))
+)
+build.model(
+   code
+  ,data=df.credit
+  ,inits = inits
+  ,params = c('beta','gam','e')
+  ,n.chains=2
+  ,n.adapt=500
+) %>% 
+  jagsresults(c('beta','gam')) %>%
+  kable
+
+
+```
+
+Income and Squared-Income both seem to have a significant effect on 
+heteroscedasticity. Rent and age do not.
