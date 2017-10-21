@@ -1,0 +1,346 @@
+---
+title: "Homeworrk 4"
+author: "Christian Tillich"
+date: "October 16, 2017"
+output: pdf_document
+---
+
+# Setup 1
+
+```{r startup, include=FALSE, warning=FALSE}
+library(rjags)
+library(jagstools)
+library(knitr)
+library(mnlogit)
+library(ordinal)
+knitr::opts_chunk$set(warning = FALSE, results="asis", cache = TRUE)
+
+build.model <- function(
+   model
+  ,data
+  ,inits
+  ,params = c("beta","sig")
+  ,n.iter = 25000
+  ,...
+){
+  M <- jags.model(textConnection(paste(model, collapse="\n")), data=data,inits=inits, quiet=T,...)
+  R <- coda.samples(M,params,n.iter=n.iter)
+  R
+}
+```
+
+
+\scriptsize
+
+```{r example_4_1_7, results="markup", comment=NA}
+
+data(Fish, package = 'mnlogit')
+fm <- formula(mode ~ price | income | catch)
+CM <- mnlogit(fm, Fish, "alt")
+summary(CM)
+```
+\normalsize
+
+```{r}
+# columns y, income, price1, price2, price3, price4, catch1, catch2, catch3, catch4
+# modes 1,2,3,4: beach, boat, charter, pier
+df <- read.table("../data/fish.txt",header=T) 
+code <- "
+  data {K <- 4}
+  model { 
+    for (i in 1:1182) {
+      y[i] ~ dcat(p[i,1:4])
+      for (k in 1:K) {p[i,k] <- phi[i,k]/sum(phi[i,])}
+      log(phi[i,1]) <- gam*prices[1,i] + delta[1]*catchs[1,i]
+      for (k in 2:K) { 
+        log(phi[i,k]) <- alph[k] + gam*prices[k,i] + beta[k]*incomes[i] + 
+          delta[k]*catchs[k,i]
+      }
+      prices[1,i] <- price1[i]/100
+      prices[2,i] <- price2[i]/100
+      prices[3,i] <- price3[i]/100
+      prices[4,i] <- price4[i]/100
+      catchs[1,i] <- catch1[i]
+      catchs[2,i] <- catch2[i]
+      catchs[3,i] <- catch3[i]
+      catchs[4,i] <- catch4[i]
+      incomes[i] <- income[i]/1000
+
+      
+    }
+
+  # priors
+  alph[1] <- 0
+  for (j in 2:K) {alph[j] ~ dnorm(0,0.001)}
+  beta[1] <- 0
+  for (j in 2:K) {beta[j] ~ dnorm(0,0.001)}
+  for (j in 1:K) {delta[j] ~ dnorm(0,0.001)}
+  gam ~ dnorm(0,0.001)
+}" %>% strsplit('\n') %>% unlist
+
+INI <- list(
+   list( alph=c(NA,0,0,0), beta=c(NA,0,0,0), delta=c(0,0,0,0), gam=0)
+  ,list(alph=c(NA,1,1,1), beta=c(NA,0,0,0), delta=c(1,1,1,1),gam=-2)
+)
+
+build.model(
+  code, df, INI, 
+  params = c('alph','beta','delta','gam'),
+  n.chains=2, n.adapt = 500, n.iter=5000) %>% 
+  jagsresults(c('alph','beta','delta','gam')) %>%
+  as.data.frame %>% 
+  kable
+
+```
+
+
+# Question 1
+
+```{r q1}
+code %>%
+  append('      for (k in 1:K) {r[i,k] <- equals(y[i], k)}', 6) %>%
+  append('      LL[i] <- sum(r[i,]*log(p[i,]))', 7) %>%
+  append('      dev[i] <- -2*LL[i]', 8) %>%
+  {.[27] <- " tot.dev <- sum(dev[])" ; .} %>%
+  build.model(df, INI, c('dev','tot.dev'),n.chains=2, n.adapt = 500, n.iter=2500) %>%
+  jagsresults(c('dev', 'tot.dev')) %>%
+  as.data.frame %>% 
+  {.[order(-.$mean), ,drop=F]} %>% 
+  head(3) %>%
+  kable
+```
+
+Observation 250 and 344 have the largest deviance. 
+
+
+# Question 2
+
+\scriptsize
+
+```{r q2, results='markup', comment=NA}
+Fish$pc <- Fish$price*Fish$catch
+fm <- formula(mode ~ price | income | catch + pc)
+CM <- mnlogit(fm, Fish, "alt")
+summary(CM)
+```
+
+\normalsize
+
+The log likelihood, with price*catch interactions, is -1811. This represents an
+increase of (b) over 15 from the original -1199
+
+# Question 3
+
+```{r q3}
+code %>%
+  append('      for (k in 1:K) {r[i,k] <- equals(y[i], k)}', 6) %>%
+  append('      LL[i] <- sum(r[i,]*log(p[i,]))', 7) %>%
+  append('      dev[i] <- -2*LL[i]', 8) %>%
+  {.[27] <- " tot.dev <- sum(dev[])" ; .} %>%
+  {.[13] <- " delta[k]*catchs[k,i] + eps[k]*catchs[k,i]*prices[k,i]" ; .} %>%
+  {.[10] <- "log(phi[i,1]) <- gam*prices[1,i] +delta[1]*catchs[1,i] + eps[1]*catchs[1,i]*prices[1,i]"  ; .} %>%
+  append("  for (j in 1:K) {eps[j] ~ dnorm(0,0.001)}", 31) %>%
+  build.model(df, INI, 'tot.dev',n.chains=2, n.adapt = 500, n.iter=2500) %>%
+  jagsresults('tot.dev') %>%
+  kable
+```
+
+The posterior mean deviance is 2377. This represents a fall of ~32 from the 
+deviance when we exclude the `choice*price` interaction. So (b) less than 40. 
+
+\newpage
+
+# Setup 2
+
+```{r example_4_4_2}
+CM <- clm(rating ~ contact + temp, data = wine)
+
+# columns y,temp, contact,judge
+df <- read.table("../data/wine.txt",header=T)
+# JAGS
+code <- "
+  data { K <- 5; KM <- 4}
+  model{
+    for(i in 1:72){
+      eta[i] <- beta[1]*contact[i] + beta[2]*temp[i]
+      logit(Q[i,1]) <- theta[1]-eta[i]
+      p[i,1] <- Q[i,1]
+      for(j in 2:KM) {
+        logit(Q[i,j]) <- theta[j]-eta[i]
+        p[i,j] <- Q[i,j] - Q[i,j-1]
+      }
+      p[i,K] <- 1 - Q[i,KM]
+      y[i] ~ dcat(p[i,1:K])
+      yrep[i] ~ dcat(p[i,1:K])
+      match[i] <- equals(y[i],yrep[i])
+    }
+    Classif.acc <- mean(match[])
+
+  # prior for cut-points
+  for(r in 1:4){ theta0[r] ~dnorm(0,1.0E-3)}
+  theta <- sort(theta0)
+  for (j in 1:2){beta[j] ~ dnorm(0,1.0E-3)}}
+" %>% strsplit('\n') %>% unlist
+
+INI <- list(
+   list(theta0=c(-0.6,0,0.6,1.2),beta=c(0,0))
+  ,list(theta0=c(-0.5,0,0.5,1),beta=c(0.5,0.5))
+)
+
+build.model(code, df[,-4], INI, c("beta","theta"), n.chains=2, n.adapt=500, n.iter=5000) %>%
+  jagsresults(c("beta","theta")) %>%
+  kable
+```
+
+# Question 4
+
+```{r q4}
+code %>%
+  build.model(df[,-4], INI, "Classif.acc", n.chains=2, n.adapt=500, n.iter=5000) %>%
+  jagsresults("Classif.acc") %>%
+  kable
+```
+
+Accuracy rate is ~34%, so (a) above 25%
+
+# Question 5
+
+```{r q5}
+code %>%
+  {.[5] <- 'eta[i] <- beta[1]*contact[i] + beta[2]*temp[i] + omega[judge[i]]';.} %>%
+  append('for (j in 1:9){omega[j] ~ dnorm(0,1.0E-3)}',21) %>%
+  build.model(df, INI, "Classif.acc", n.chains=2, n.adapt=500, n.iter=5000) %>%
+  jagsresults("Classif.acc") %>%
+  kable
+  
+```
+
+The classification accuracy is now ~43%, so (a) above 30%
+
+# Question 6
+
+```{r q6}
+INI <- list(
+   list(theta0=c(-0.6,0,0.6,1.2),beta=c(0,0,0))
+  ,list(theta0=c(-0.5,0,0.5,1),beta=c(0.5,0.5,0.5))
+)
+
+code %>%
+  {.[5] <- 'eta[i] <- beta[1]*contact[i] + beta[2]*temp[i] + beta[3]*temp[i]*contact[i] + omega[judge[i]]';.} %>%
+  append('for (j in 1:9){omega[j] ~ dnorm(0,1.0E-3)}',21) %>%
+  {.[23] <- gsub('(j in 1:2)','j in 1:3',.[23]); .} %>%
+  build.model(df, INI, "Classif.acc", n.chains=2, n.adapt=500, n.iter=5000) %>%
+  jagsresults("Classif.acc") %>%
+  kable
+  
+```
+
+The classification accuracy is still ~43%, so (a) above 40%. 
+
+\newpage
+
+
+# Setup 3
+
+\scriptsize
+
+```{r example_4_6_2, results="markup",comment=NA}
+# columns rating, complaints,learning,advance,privileges,raises,critical
+df <- read.table("../data/attitude.txt",header=T)
+# conventional least squares
+LM  <- lm(rating ~complaints+learning+advance+privileges+raises+critical, data=df)
+summary(LM)
+```
+\normalsize
+
+
+```{r}
+code <-"
+  data {r <- 0.5; tau2[1] <- 0.01; tau2[2] <- 10; p <- 6}
+  model { 
+    for (i in 1:30) {
+      rating[i] ~ dnorm(mu[i],tau)
+      e[i] <- rating[i] - mu[i]
+      mu[i] <- beta0 + beta[1]*complaints[i] + beta[2]*learning[i] + 
+        beta[3]*advance[i] + beta[4]*privileges[i] + beta[5]*raises[i] + 
+        beta[6]*critical[i]
+    }
+  
+    #Priors
+    for (j in 1:6) {
+      beta[j] ~ dnorm(0, 1/tau2[G[j]])
+      G[j] <- gam[j] + 1
+      gam[j] ~ dbern(r)
+    }
+    tau ~ dgamma(1,0.001)
+    beta0 ~ dnorm(0,0.001)
+    M <- 1 + gam[1]*pow(2,p-1) + gam[2]*pow(2,p-2) + gam[3]*pow(2,p-3) +
+      gam[4]*pow(2,p-4) + gam[5]*pow(2,p-5) +gam[6]
+    for (m in 1:64) {mod[m] <- equals(m,M)}
+  }
+" %>% strsplit('\n') %>% unlist
+
+INI <- list(
+   list(beta=c(0,0,0,0,0,0),tau=1, beta0=0)
+  ,list(beta=c(0,0,0,0,0,0),tau=0.1, beta0=10)
+)
+
+
+build.model(code, df, INI, c("beta","gam"), n.chains=2,n.adapt=500, n.iter=25000) %>%
+  jagsresults(c('beta','gam')) %>%
+  kable
+
+
+
+```
+
+
+# Question 7
+
+Only one predictor - complaints - has a posterior probability of inclusion greater
+than 95%. 
+
+# Question 8
+
+```{r q8}
+cbind(df[1], scale(df[-1])) %>%
+  build.model(code, ., INI, c("beta","gam"),n.chains=2,n.adapt=500, n.iter=25000) %>%
+  jagsresults(c('beta','gam')) %>%
+  kable
+```
+
+The probability of inclusion increased across the board. However, still only 
+`complaints` had a mean prosterior probability of inclusion greater than 95%. 
+
+# Question 9
+
+```{r q9}
+cbind(df[1], scale(df[-1])) %>%
+  build.model(code, ., INI, c("mod"),n.chains=2,n.adapt=500, n.iter=25000) %>%
+  jagsresults(c('mod')) %>%
+  as.data.frame %>%
+  {.[order(-.$mean), ,drop=F]} %>% 
+  head(2) %>%
+  kable
+```
+
+
+Model number 49 is the most probable. This model is represented 1 + X1 + X2. 
+
+#Question 10
+
+```{r q10}
+df2 <- cbind(df[1], scale(df[-1])) 
+
+code %>%
+  {.[2] <- gsub('r <- 0.5; ','',.[2]); .} %>%
+  append('    r[j] ~ dbeta(1,1)', 15) %>%
+  {.[17] <- gsub('(r)','(r[j])',.[17], fixed=T); .} %>%
+  build.model(df2, INI, "r",n.chains=2,n.adapt=500, n.iter=25000) %>%
+  jagsresults("r") %>%
+  kable
+```
+
+The posterior means for `complaints` and `privileges' both exceed 0.50. 
+
+

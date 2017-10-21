@@ -1,0 +1,104 @@
+---
+title: "Final Project"
+author: "Christian Tillich"
+date: "October 21, 2017"
+output: pdf_document
+---
+
+```{r startup, include=FALSE, warning=FALSE}
+library(rjags)
+library(jagstools)
+library(knitr)
+library(mnlogit)
+library(ordinal)
+knitr::opts_chunk$set(warning = FALSE, results="asis", cache = TRUE)
+
+build.model <- function(
+   model
+  ,data
+  ,inits
+  ,params
+  ,n.iter = 25000
+  ,...
+){
+  M <- jags.model(textConnection(paste(model, collapse="\n")), data=data,inits=inits, quiet=T,...)
+  R <- coda.samples(M,params,n.iter=n.iter)
+  R
+}
+```
+
+```{r data}
+df <- read.table("../data/tb.txt",header=T) 
+```
+
+```{r jags_model}
+code <- "
+  model{
+    for(i in 1:134){
+      #Core Model
+      reactors[i] ~ dpois(mu[i])
+      mu[i] <- adar[i]*nu[i]
+      log(nu[i]) <- beta.0 + beta.sex*sex[i] + beta.age[age[i]] + beta.type[type[i]]
+
+      #Deviance Calc
+      dev[i] <- 2*(reactors[i]*log(reactors[i]/mu[i]) - (reactors[i] - mu[i]))
+    } 
+
+    tot.dev <- sum(dev[])
+
+    #Priors
+    beta.0 ~ dnorm(0, 0.001)
+    beta.sex ~ dnorm(0, 0.001)
+    for(j in 2:3){beta.age[j] ~ dnorm(0, 0.001)}
+    beta.age[1] <- 0
+    for(j in 2:4){beta.type[j] ~ dnorm(0, 0.001)}
+    beta.type[1] <- 0
+  }
+" %>% strsplit('\n') %>% unlist
+
+inits <- list(
+   beta.0 = 0
+  ,beta.sex = 0
+  ,beta.age = c(NA, 0, 0)
+  ,beta.type = c(NA, 0, 0, 0)
+)
+
+params <- c('beta.0','beta.sex','beta.age[2:3]','beta.type[2:4]','tot.dev')
+monitor <- c('beta.0','beta.sex','beta.age','beta.type','tot.dev')
+build.model(code, df, inits, params, n.chains=2, n.adapt=500, n.iter=25000) %>%
+  jagsresults(monitor) %>%
+  kable
+```
+
+
+# Question 1
+
+Total Deviance is~355. So (a) above 300. 
+
+# Question 2
+
+`beta.type[2]` has a confidence interval of roughly [0.63, 1.56]. This interval
+is all positive, suggesting sufficient evidence that Cervids bear increased risk. 
+
+
+# Binomial Refactor
+
+```{r q3}
+code %>% 
+  {.[5] <- "      reactors[i] ~ dnegbin(p[i], theta)"; .} %>%
+  append('      p[i] <- theta/(theta + mu[i])',5) %>%
+  append('    theta ~ dunif(0,10)',22) %>%
+  build.model(df, inits, c(params, 'theta'), n.chains=2, n.adapt=500, n.iter=25000) %>%
+  jagsresults(c(monitor,'theta')) %>%
+  kable
+```
+
+# Question 3
+
+After rephrasing as a negative-binomial model, none of the type variables 
+have sufficient evidence to be considered significant. 
+
+# Question 4
+
+The posterior mean for theta is ~0.56
+

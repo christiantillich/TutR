@@ -1,3 +1,5 @@
 .Rproj.User/
 .Rhistory
 ~$*
+*_cache/
+*_files/

@@ -1,0 +1,361 @@
+---
+title: "Homework 3"
+author: "Christian Tillich"
+date: "October 11, 2017"
+output: pdf_document
+---
+
+# Setup 1
+
+```{r setup, include=FALSE}
+library(rjags)
+library(jagstools)
+library(knitr)
+knitr::opts_chunk$set(warning = FALSE, results="asis", cache=T)
+
+build.model <- function(
+   model
+  ,data
+  ,inits
+  ,params = c("beta","sig")
+  ,n.iter = 25000
+  ,...
+){
+  M <- jags.model(textConnection(paste(model, collapse="\n")), data=data,inits=inits, quiet=T,...)
+  R <- coda.samples(M,params,n.iter=n.iter)
+  R
+}
+```
+
+
+
+```{r example_3_3_3, results="hide"}
+library(rjags)
+library(jagstools)
+
+# columns dfree	, age, beck, ivhx, ndrugtx, race, treat, site
+df <- read.table("../data/druguse.txt",header=T)
+# create categorical predictor
+df$ivhx.gr <- factor(df$ivhx)
+# classical fit
+CF <- glm(dfree ~ age+beck+ivhx.gr+ndrugtx+race+treat+site, data=df, family=binomial(link="logit"))
+summary(CF) %>% coef %>% kable
+
+# JAGS 
+code <- "
+model { 
+  for (i in 1:575) {
+    dfree[i] ~ dbern(p[i])
+    dfree.rep[i] ~ dbern(p[i])
+    check[i] <- equals(dfree.rep[i],dfree[i])
+    check.y1[i] <- equals(dfree.rep[i],dfree[i])*equals(dfree[i],1)
+    check.y0[i] <- equals(dfree.rep[i],dfree[i])*equals(dfree[i],0)
+    logit(p[i]) <- beta0 + beta[1]*age[i]/10 + beta[2]*beck[i]/10 + 
+      beta[3]*equals(ivhx[i],2) + beta[4]*equals(ivhx[i],3) + 
+      beta[5]*ndrugtx[i]/10 + beta[6]*race[i] + beta[7]*treat[i] + 
+      beta[8]*site[i]
+  }
+  # predict probs at combination of covariates
+  logit(P[1]) <- beta0+beta[1]*3.7+beta[2]*1.7+beta[4]+beta[5]*0.1+beta[7]
+  logit(P[2]) <- beta0+beta[1]*2.7+beta[2]*1.7+beta[4]+beta[5]*0.6
+  totch.y1 <- sum(check.y1[])
+  totch.y0 <- sum(check.y0[]) 
+
+  # priors
+  beta0 ~ dnorm(0,0.001)
+  for (j in 1:8) {
+    beta[j] ~ dnorm(0,0.001)
+    sig.beta[j] <- step(beta[j])
+  }
+}" %>% strsplit('\n') %>% unlist
+
+
+INI <- list(
+   list(beta0=0,beta=c(0,0,0,0,0,0,0,0))
+  ,list(beta0=-2,beta=c(0,0,-0.5,-0.5,0,0,0,0))
+)
+
+R <- build.model(code, df, INI, params="beta",n.chains=2,n.adapt=500)
+
+
+summary(R)$statistics %>% kable %>% print
+summary(R)$quantiles %>% kable %>% print
+
+# trace plot and Kernel density
+#plot(R)
+#gelman.diag(R)$psrf %>% kable %>% print
+#gelman.plot(R)
+
+# extract predicted probabilities, predictive concordance rates
+#R1 <- build.model(code, df, INI, params=c('check','p'),n.chains=2,n.adapt=500)
+#jagsresults(R1, c("check")) %>% kable %>% print
+#jagsresults(R1, c("p")) %>% kable %>% print
+
+```
+
+# Problem 1
+
+The correct interpretation of `totch.y1` is (b). The variable `check` is 
+true when a replicated observation matches the actual observation. `check.y1`
+is true when `check` is true **and** when the actual response was equal to 1. 
+Thus (b)
+
+# Problem 2
+
+Sensitivity is the percentage of response = 1 given predict = 1. Therefore, the
+answer is (b). 
+
+# Problem 3
+
+```{r q3}
+code %>%
+  {.[19] <- "  sens <- sum(check.y1[]) / sum(dfree[])";.} %>%
+  build.model(df, INI, params = 'sens',n.chains=2,n.adapt=500) %>%
+  jagsresults('sens') %>% 
+  kable
+```
+
+The posterior mean sensitivity is (b) over 0.25
+
+# Problem 4
+
+```{r q4}
+code %>%
+  {.[19] <- "  cont <- P[1]/P[2]";.} %>%
+  build.model(df, INI, params = 'cont',n.chains=2,n.adapt=500) %>%
+  jagsresults('cont') %>% 
+  kable
+```
+
+The posterior mean for this contrast is ~3.0, so (b) over 2.5. 
+
+# Problem 5
+
+```{r q5}
+
+code %>%
+  {.[15] <- "  logit(P[1]) <- beta0+beta[1]*3.7+beta[2]*1.7+beta[5]*0.1+beta[7]";.} %>%
+  {.[19] <- "  cont <- P[1] / P[2]";.} %>%
+  build.model(df, INI, params = 'cont',n.chains=2,n.adapt=500) %>%
+  jagsresults('cont') %>% 
+  kable
+
+```
+
+
+The posterior mean for the ratio P[1] / P[2] is ~4.8, so (a) over 4.5. 
+
+# Problem 6
+
+```{r q6}
+code %>%
+  append("  r[i] <- (dfree[i] - p[i])/(p[i]*(1-p[i]))^0.5", 5) %>%
+  build.model(df, INI, params = 'r',n.chains=2,n.adapt=500, n.iter=1000) %>%
+  jagsresults('r') %>%
+  as.data.frame %>%
+  .[.$mean == max(.$mean) | .$mean == min(.$mean),] %>% 
+  #filter(mean == max(mean) | mean == min(mean)) %>%
+  kable(row.names=TRUE)
+```
+
+Observations #7 and #551 are the max and min standardized residuals, respectively. 
+
+# Setup 2
+
+```{r setup2, results="hide"}
+library(rjags)
+df <- data.frame(
+   n = c(1379,638,213,254)
+  ,y = c(24, 35, 21,30)
+  ,z = c(32, 56, 26,47)
+  ,score = c(1,3,5,6)
+)
+df %<>% mutate(not.y = n-y)
+df %<>% mutate(not.z = n-z)
+
+# classical binomial regression fit
+CF1=glm(cbind(y, not.y) ~ score, data = df, family=binomial) 
+CF2=glm(cbind(z, not.z) ~ score, data = df, family=binomial) 
+summary(CF1) %>% coef %>% kable
+summary(CF2) %>% coef %>% kable
+
+# JAGS 
+code <- "
+  model { 
+    for (i in 1:4) {
+      y[i] ~ dbin(p[i],n[i])
+      y.rep[i] ~ dbin(p[i],n[i])
+      check[i] <- step(y.rep[i]-y[i]) + 0.5*equals(y.rep[i],y[i])
+      logit(p[i]) <- beta[1]+beta[2]*score[i]
+    }
+    
+  # priors
+  for (j in 1:2) {beta[j] ~ dnorm(0,0.001)}
+}" %>% strsplit('\n') %>% unlist
+
+INI <- list(
+   list(beta=c(0,0))
+  ,list(beta=c(0,0.5))
+)
+```
+
+
+# Problem 7
+
+```{r q7}
+
+build.model(code, df, INI, params = 'check', n.chains = 2, n.adapt = 500) %>%
+  jagsresults('check') %>% 
+  kable
+
+# M <- jags.model(inits=INI,data=D,n.chains=2,n.adapt=500, file="binom.jag")
+# R <- coda.samples(M,c("beta"),n.iter=5000)
+# summary(R)
+# gelman.diag(R)
+
+```
+
+Observation # 2 actually causes the most concern, and the model tends to 
+underpredict the true result. 
+
+# Problem 8
+
+```{r q8}
+code %>%
+  append('m[i] <- n[i]*p[i]', 7) %>%
+  append('dv[i] <- 2*(y[i]*log(y[i]/m[i])+(n[i]-y[i])*log((n[i]-y[i])/(n[i]-m[i])))', 8) %>%
+  append('tot.dv <- 2*sum(dv[])', 13) %>%
+  build.model(df, INI, params = c('tot.dv','dv'), n.chains = 2, n.adapt = 500) %>%
+  jagsresults(c('tot.dv','dv')) %>%
+  kable
+```
+
+The mean posterior deviance is ~ 9.6, so (a) over 5. 
+
+# Problem 9
+
+```{r q9}
+
+INI <- list(
+   list(beta=c(0,0), gam=c(0,0))
+  ,list(beta=c(0,0.5), gam=c(0,0.5))
+)
+
+
+code %>%
+  append('z[i] ~ dbin(p2[i], n[i])', 4) %>%
+  append('logit(p2[i]) <- gam[1] + gam[2]*score[i]', 8) %>%
+  append('for(j in 1:2) {gam[j] ~ dnorm(0, 0.001)}', 13) %>% 
+  append('r <- step(gam[2] - beta[2])', 14) %>%
+  build.model(df, INI, params = c('beta','gam','r'), n.chains = 2, n.adapt = 500) %>%
+  jagsresults(c('beta','gam','r')) %>%
+  kable
+  
+```
+
+The probability is that the trend slope for hypertension is greater than CHD is
+~63%, so (b) under 0.75. 
+
+
+# Setup 3
+
+
+
+```{r setup3, results="hide"}
+library(MASS)
+
+# columns headed ofp, hosp, health,numchron,gendermale,school,privins
+df <- read.table("../data/debtriv.txt",header=T)
+df$health.gr <- factor(df$health)
+
+#Different GLM models - Poisson and Neg. Bin. 
+CM1 <- glm(ofp ~ hosp+health.gr+numchron+gendermale+school+privins, data = df, family = poisson)
+CM2 <- glm.nb(ofp ~ hosp+health.gr+numchron+gendermale+school+privins, data = df)
+
+# JAGS Poisson
+poisson <- "
+model { 
+  for (i in 1:4406) { 
+    ofp[i] ~ dpois(mu[i])
+    log(mu[i]) <- beta0 + beta[1]*hosp[i] + beta[2]*equals(health[i],2) + 
+      beta[3]*equals(health[i],3) + beta[4]*numchron[i] + beta[5]*gendermale[i] + 
+      beta[6]*school[i] + beta[7]*privins[i]
+  }
+  beta0 ~ dnorm(0,0.000001)
+  for (i in 1:7){ beta[i] ~ dnorm(0,0.001)}
+}" %>% strsplit('\n') %>% unlist
+
+p.inits <- list(
+  list(beta0=0,beta=c(0,0,0,0,0,0,0))
+  ,list(beta0=1,beta=c(0.2,0.2,-0.2,0,0,0,0.2))
+)
+build.model(poisson, df, p.inits, params = 'beta', n.chains = 2, n.adapt = 500, n.iter=1000) %>%
+  jagsresults('beta') %>%
+  kable
+
+# JAGS Neg-Bin
+negbin <- "
+  model { 
+    for (i in 1:4406) { 
+      ofp[i] ~ dnegbin(p[i],theta)
+      p[i] <- theta/(theta+mu[i])
+      log(mu[i]) <- beta0 + beta[1]*hosp[i] + beta[2]*equals(health[i],2) + 
+        beta[3]*equals(health[i],3) + beta[4]*numchron[i] + beta[5]*gendermale[i] + 
+        beta[6]*school[i] + beta[7]*privins[i]
+    }
+    theta ~ dgamma(1,0.01)
+    beta0 ~ dnorm(0,0.000001)
+    for (i in 1:7){ beta[i] ~ dnorm(0,0.001)}
+}" %>% strsplit('\n') %>% unlist
+n.inits <- list(
+   list(beta0=0,beta=c(0,0,0,0,0,0,0),theta=1)
+  ,list(beta0=1,beta=c(0.2,0.2,-0.2,0,0,0,0.2),theta=2)
+)
+
+build.model(negbin, df, n.inits, params=c('beta','theta'), n.chains=2, n.adapt = 500, n.iter=1000) %>%
+  jagsresults(c('beta','theta')) %>%
+  kable
+
+
+```
+
+# Problem 10
+
+```{r q10}
+poisson %>%
+  append('dev[i] <- 2*(ofp[i]*log(ofp[i]/mu[i]) - (ofp[i] - mu[i]))', 7) %>% 
+  append('tot.dev <- sum(dev[])', 9) %>%
+  build.model(df, p.inits, params = 'tot.dev', n.chains = 2, n.adapt = 500, n.iter=1000) %>%
+  jagsresults('tot.dev') %>%
+  kable
+```
+
+The posterior mean for the total Poisson deviance is ~23000, so (a) under 24000
+
+# Problem 11
+
+```{r q11}
+negbin %>%
+  append('V[i] <- mu[i] + mu[i]^2/theta',8) %>%
+  append('r[i] <- (ofp[i] - mu[i])/V[i]^0.5', 9) %>%
+  build.model(df, n.inits, params='r', n.chains=2, n.adapt = 500, n.iter=500) %>%
+  jagsresults('r') %>%
+  as.data.frame %>% 
+  arrange(desc(mean)) %>%
+  head(2) %>%
+  kable
+```
+
+The two largest residuals are shown above?
+
+# Problem 12
+
+```{r q12}
+negbin %>%
+  {.[10] <- 'theta ~ dunif(0, 10)'; .} %>%
+  build.model(df, n.inits, params='theta', n.chains=2, n.adapt = 500, n.iter=5000) %>%
+  jagsresults('theta') %>% 
+  kable
+```
+
+Posterior mean of theta is ~1.21, so (b) under 1.25
