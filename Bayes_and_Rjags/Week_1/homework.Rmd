@@ -20,11 +20,11 @@ knitr::opts_chunk$set(echo = FALSE, warning = FALSE, results="asis")
 code <- list(
    'data {n0 <- 0.1}'
   ,'model{ '
-  , 'for (i in 1:10) {y[i] ~ dnorm(mu,tau)} '
-  ,'tau ~ dgamma(1,0.01)'
-  ,'sigma2 <- 1/tau' 
-  ,'sigma <- sqrt(sigma2)'
-  ,'mu ~ dnorm(0, n0*tau)'
+  ,'  for (i in 1:10) {y[i] ~ dnorm(mu,tau)} '
+  ,'  tau ~ dgamma(1,0.01)'
+  ,'  sigma2 <- 1/tau' 
+  ,'  sigma <- sqrt(sigma2)'
+  ,'  mu ~ dnorm(0, n0*tau)'
   ,'}'
   #,sep = '\n'
 )

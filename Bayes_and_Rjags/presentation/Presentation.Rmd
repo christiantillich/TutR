@@ -1,0 +1,291 @@
+---
+title: "Intro to Bayesian Stats"
+author: "Christian Tillich"
+date: "November 5, 2017"
+output: 
+  ioslides_presentation:
+    highlight: pygments
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(MASS)
+library(jagstools)
+knitr::opts_chunk$set(echo = FALSE, message=F, warning=F, cache = TRUE)
+```
+
+
+
+## Outline
+
+1. Bayesian Stats
+2. Realistic Solutions
+3. R-equired Libraries
+4. The JAGS Language
+5. Example Problems
+
+## Bayesian Stats (In a Nutshell) 
+
+<center>
+![](http://www.saedsayad.com/images/Bayes_rule.png)
+</center><br>
+
+
+* In practice 1/P(x) is reduced to a constant
+* We replace everything by distributions. 
+
+
+## Solving Bayesian Problems
+
+<center>
+![](images/conjugate_example.png)
+</center><br>
+
+* Solution is a compromise between prior and data
+* This becomes messy quickly
+
+
+## Solving Real Bayesian Problems
+
+<center>
+```{r gibbs, out.width = "500pt"}
+knitr::include_graphics("images/gibbs_sampler.PNG")
+```
+</center><br>
+
+* Enter Gibbs Sampling. 
+* Hold one parameter constant, sample the other. 
+* Gets to the full conditional distribution quick. 
+
+## Solving Real Bayesian Problems
+
+<center>
+```{r true_skill, out.width = "500pt"}
+knitr::include_graphics("images/true_skill.png")
+```
+</center><br>
+
+* Microsoft TrueSkill
+* P(Latent Skill Measure | Game Performance)
+
+
+## Necessary R Libraries
+
+```{r jags, echo=TRUE}
+library(rjags)
+library(coda)
+```
+
+* "Just-Another-Gibbs-Sampler""
+
+## The JAGS language
+
+
+```
+data {n0 <- 0.1} 
+model{ 
+  for (i in 1:10) {y[i] ~ dnorm(mu,tau)} 
+  tau ~ dgamma(1,0.01)
+  sigma2 <- 1/tau
+  sigma <- sqrt(sigma2)
+  mu ~ dnorm(0, n0*tau)
+}
+```
+
+
+* Is declarative
+* Specifies how the parameters and distributions relate
+* By sampling these relationships we can get mean and confidence intervals for 
+any and all parameters.
+
+
+
+## Example Problem (Simple Stats)
+
+```{r simple_setup, results='asis'}
+
+code <- list(
+   'data {n0 <- 0.1}'
+  ,'model{ '
+  ,'  for (i in 1:10) {y[i] ~ dnorm(mu,tau)} '
+  ,'  tau ~ dgamma(1,0.01)'
+  ,'  sigma2 <- 1/tau' 
+  ,'  sigma <- sqrt(sigma2)'
+  ,'  mu ~ dnorm(0, n0*tau)'
+  ,'}'
+  #,sep = '\n'
+)
+
+build.model <- function(
+   jags.program
+  ,data = list(y=c(10,9,9,8,9.5,7,12,11,8,10.5))
+  ,inits = list(list(mu=10,tau=1),list(mu=9, tau=0.1))
+  ,params = c("mu","sigma","sigma2")
+  ,n.iter=25000
+  ,...
+){
+
+  mdl <- textConnection(paste(jags.program, collapse='\n'))
+  
+  M <- jags.model(mdl,data=data, inits = inits, quiet = TRUE, ...) #n.chains=2,n.adapt=500)
+  R <- coda.samples(M,params,n.iter=n.iter)
+  
+  return(R)
+}
+
+show.model <- function(jags.model){
+  summary(jags.model)$statistics %>% as.data.frame() %>% kable %>% print
+  #summary(jags.model)$quantiles %>% as.data.frame() %>% kable %>% print
+}
+
+build.model(code, n.chains=2, n.adapt = 500) %>% 
+  show.model
+```
+
+## Example Problem (Linear Regression)
+
+<pre style="font-size:50%;line-height:125%;">
+model { 
+  for (i in 1:102) {
+    prestige[i] ~ dnorm(mu[i],tau)
+    e[i] <- prestige[i]-mu[i]
+    mu[i] <- beta[1]+beta[2]*education[i]+beta[3]*log2inc[i]+beta[4]*women[i]
+  }
+  for (j in 1:4) {beta[j] ~ dnorm(0,0.001)}
+  tau ~ dgamma(1,0.001)
+  sig <- 1/sqrt(tau)
+}
+</pre>
+
+```{r linear, results="asis"}
+df.prestige <- read.table("../data/prestige.txt",header=T)
+# JAGS
+code <- "
+model { 
+  for (i in 1:102) {
+    prestige[i] ~ dnorm(mu[i],tau)
+    e[i] <- prestige[i]-mu[i]
+    mu[i] <- beta[1]+beta[2]*education[i]+beta[3]*log2inc[i]+beta[4]*women[i]
+  }
+  for (j in 1:4) {beta[j] ~ dnorm(0,0.001)}
+  tau ~ dgamma(1,0.001)
+  sig <- 1/sqrt(tau)
+}" %>% strsplit('\n') %>% unlist
+
+
+build.model <- function(
+   model
+  ,data = df.prestige
+  ,inits = list(
+      list(beta=c(0,0,0,0),tau=1)
+     ,list(beta=c(-10,0,0,0),tau=0.1)
+   )
+  ,params = c("beta","sig")
+  ,...
+){
+  M <- jags.model(textConnection(paste(model, collapse="\n")), data=data,inits=inits, quiet=T,...)
+  R <- coda.samples(M,params,n.iter=25000)
+  R
+}
+
+build.model(code, params = "beta", n.chains = 2, n.adapt = 500) %>% show.model
+```
+
+## Example Problem (GLM Models)
+
+<pre style="font-size:50%;line-height:125%;">
+model { 
+  for (i in 1:4406) { 
+    ofp[i] ~ dpois(mu[i])
+    log(mu[i]) <- beta0 + beta[1]*hosp[i] + beta[2]*equals(health[i],2) + 
+      beta[3]*equals(health[i],3) + beta[4]*numchron[i] + beta[5]*gendermale[i] + 
+      beta[6]*school[i] + beta[7]*privins[i]
+    dev[i] <- 2*(ofp[i]*log(ofp[i]/mu[i]) - (ofp[i] - mu[i]))
+  }
+  tot.dev <- sum(dev[])
+  beta0 ~ dnorm(0,0.000001)
+  for (i in 1:7){ beta[i] ~ dnorm(0,0.001)}
+}
+</pre>
+
+```{r setup3, results="asis", warning=FALSE}
+
+build.model <- function(
+   model
+  ,data
+  ,inits
+  ,params = c("beta","sig")
+  ,n.iter = 25000
+  ,...
+){
+  M <- jags.model(textConnection(paste(model, collapse="\n")), data=data,inits=inits, quiet=T,...)
+  R <- coda.samples(M,params,n.iter=n.iter)
+  R
+}
+
+# columns headed ofp, hosp, health,numchron,gendermale,school,privins
+df <- read.table("../data/debtriv.txt",header=T)
+df$health.gr <- factor(df$health)
+
+#Different GLM models - Poisson and Neg. Bin. 
+CM1 <- glm(ofp ~ hosp+health.gr+numchron+gendermale+school+privins, data = df, family = poisson)
+CM2 <- glm.nb(ofp ~ hosp+health.gr+numchron+gendermale+school+privins, data = df)
+
+# JAGS Poisson
+poisson <- "
+model { 
+  for (i in 1:4406) { 
+    ofp[i] ~ dpois(mu[i])
+    log(mu[i]) <- beta0 + beta[1]*hosp[i] + beta[2]*equals(health[i],2) + 
+      beta[3]*equals(health[i],3) + beta[4]*numchron[i] + beta[5]*gendermale[i] + 
+      beta[6]*school[i] + beta[7]*privins[i]
+    dev[i] <- 2*(ofp[i]*log(ofp[i]/mu[i]) - (ofp[i] - mu[i]))
+  }
+  tot.dev <- sum(dev[])
+  beta0 ~ dnorm(0,0.000001)
+  for (i in 1:7){ beta[i] ~ dnorm(0,0.001)}
+}" %>% strsplit('\n') %>% unlist
+
+p.inits <- list(
+  list(beta0=0,beta=c(0,0,0,0,0,0,0))
+  ,list(beta0=1,beta=c(0.2,0.2,-0.2,0,0,0,0.2))
+)
+build.model(poisson, df, p.inits, params = c('tot.dev'), n.chains = 2, n.adapt = 500, n.iter=1000) %>%
+  jagsresults('tot.dev') %>%
+  kable
+```
+
+
+## Example Problem (Custom Measures)
+
+<pre style="font-size:50%;line-height:125%;">
+model { 
+  for (i in 1:575) {
+    dfree[i] ~ dbern(p[i])
+    dfree.rep[i] ~ dbern(p[i])
+    check[i] <- equals(dfree.rep[i],dfree[i])
+    check.y1[i] <- equals(dfree.rep[i],dfree[i])*equals(dfree[i],1)
+    check.y0[i] <- equals(dfree.rep[i],dfree[i])*equals(dfree[i],0)
+    logit(p[i]) <- beta0 + beta[1]*age[i]/10 + beta[2]*beck[i]/10 + 
+      beta[3]*equals(ivhx[i],2) + beta[4]*equals(ivhx[i],3) + 
+      beta[5]*ndrugtx[i]/10 + beta[6]*race[i] + beta[7]*treat[i] + 
+      beta[8]*site[i]
+  }
+  # predict probs at combination of covariates
+  logit(P[1]) <- beta0+beta[1]*3.7+beta[2]*1.7+beta[4]+beta[5]*0.1+beta[7]
+  logit(P[2]) <- beta0+beta[1]*2.7+beta[2]*1.7+beta[4]+beta[5]*0.6
+  totch.y1 <- sum(check.y1[])
+  totch.y0 <- sum(check.y0[]) 
+
+  # priors
+  beta0 ~ dnorm(0,0.001)
+  for (j in 1:8) {
+    beta[j] ~ dnorm(0,0.001)
+    sig.beta[j] <- step(beta[j])
+  }
+}
+</pre>
+
+## For More Info
+
+[github.com/christiantillich/TutR](github.com/christiantillich/TutR)
