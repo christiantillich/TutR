@@ -1,0 +1,217 @@
+---
+title: "Bayesian Search"
+subtitle: "The Definitive Guide"
+author: "Christian Tillich"
+date: "`r format(Sys.Date() ,'%b %d, %Y')`"
+fontsize: "10pt"
+output: 
+  beamer_presentation:
+    theme: "metropolis"
+    # colortheme: "dolphin"
+    fig_caption: no
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+    echo = FALSE
+  , out.height = "100pt"
+  , out.width = "125pt"
+)
+```
+
+## Contents
+\tableofcontents
+
+## Motivation
+
+  #. Bayesian search is complicated process with fairly non-intuitive mathematical reasoning.
+  #. The literature on the subject gets dense real, real quick. 
+  #. We implement a parallelized search, which is not typical and comes with it's own oddities. 
+
+# Gaussian Processes
+
+## Definition
+
+A distribution of __functions__, not numbers. 
+
+*Consider the normal distribution. This distribution tells you the probability of getting a specific value of x when you sample it randomly. Imagine that instead of pulling out a single number, you pulled out a specific function. A guassian process is the distribution for the range of functions you could pull out.* 
+
+## The Linear Example [^linear]
+::: columns 
+:::: column  
+\centering
+  
+  $F = \beta X$  \hspace{10pt} $\beta \sim N(0,1)$ \vspace{10pt}  
+  or, more typically \vspace{10pt}  
+  $F \sim N(0, x_1^Tx_2)$ 
+:::: 
+
+:::: column
+```{r linear_example, fig.align = "right"}
+beta = rnorm(5000)
+qplot(x=0,y=0) + 
+  geom_abline(slope = beta, intercept = 0, alpha = 0.01) + 
+  ggtitle("A Linear Gaussian Process")
+```
+:::: 
+:::  
+
+ [^linear]: 5000 lines, sampled at random, with a fixed intercept at 0. This plot is refreshed each time the slides are rebuilt.
+
+
+
+
+## The Common Covariance Choice [^squared_exp]
+
+::: columns
+:::: column
+  $F \sim N(0, e^{k||x_1 - x_2||^2})$  
+  
+  \vspace{10pt}  
+  
+  The most common choice of covariance, and the default for `sklearn`
+::::
+
+:::: column
+```{r squared_exp}
+
+x <- seq(0,1,0.01)
+sample_gp <- function(){
+  k <- function(x,y,k = -100) exp(k*(x-y)^2)
+  cv <- outer(x,x,FUN = "k")
+  rand <- rnorm(length(x))
+  svd(cv) %>% {.$u %*% diag(sqrt(.$d)) %*% rand}
+  #' This above line is tricky. We're mapping a sample drawn from N(0,1) into
+  #' the space defined by N(0, cv). It's not obvious that the way to do this
+  #' mapping is to multiply the random vector by sqrt(cv), which can be found 
+  #' by Cholesky decomp or SVD
+}
+qplot(x, sample_gp(), geom = "line") + 
+  geom_line(y = sample_gp(), color = "blue") + 
+  geom_line(y = sample_gp(), color = "forestgreen") + 
+  geom_line(y = sample_gp(), color = "red") + 
+  coord_cartesian(ylim = c(-2,2))
+```
+::::
+:::
+
+[^squared_exp]: 4 draws of a gaussian process with squared exponential covariance. This plot is refreshed each time the slides are rebuilt.
+
+# Gaussian Process Regression
+
+## Definition
+
+An algorithm to best fit a Gaussian Process through a series of known data points.
+
+## The Solution to GP Regression. 
+::: columns
+
+:::: column
+
+  #. ...is not obvious. See the *Further Readings* section for detailed proofs.
+  #. ...gives us confidence intervals. 
+      #. Because GPs define a distribution over all possible functions, we get ranges of certainty as well as means.
+      #. Using this uncertainty is a big part of Bayesian Search. 
+::::
+
+:::: column
+\centering ![](https://i.stack.imgur.com/1R29J.png){width=200}
+::::
+:::
+
+## Python's GaussianProcess
+
+  #. We use `sklearn.gaussian_process.GaussianProcess` to do the regression.
+  #. By default, `corr` is squared-exponential and the mean of f(x), `regr`, is constant 0.
+  #. Data automatically normalizes. 
+  #. Has various other options for optimization, krigging, smoothing, etc.
+  #. Note that currently this method is deprecated
+
+# Bayesian Search
+
+## Definition
+
+A process where we exploit the mean and variance of Gaussian Process Regression to define regions of likely improvement to guide our search for the optimal value of a variable.
+
+## The Algorithm
+
+::: columns
+:::: column
+  \footnotesize
+  
+  #. Fit a Gaussian Process to all observed values of your objective function (e.g. AUC)
+  #. Using an acquisition function that you've specified, evaluate expected improvement at all possible candidates.
+  #. Choose the candidate that maximizes expected improvement over your current best candidate. 
+  #. Sample the objective function at the new candidate. 
+  #. Append your observed value. 
+  #. Repeat at 1 until there are no more iterations.  
+::::
+
+:::: column
+![](https://storage.googleapis.com/gweb-cloudblog-publish/images/hyperparameter-32-b.max-600x600.png)
+::::
+:::
+
+## The Greedy Acquisition Function
+
+\centering $EI(x) = (\mu(x) - f(x^+))\Phi(Z) + \sigma(x)\phi(Z)$
+
+\vspace{15pt} \raggedright  
+$\mu$ is the mean of the Gaussian Process  
+$\sigma$ is the standard deviation of the Gaussian Process  
+$f(x^+)$ is the currently observed maximum value.  
+Z is the expected improvement, transformed to a z-score  
+$\Phi$ is the CDF of Z   
+$\phi$ is the PDF of Z  
+  
+
+## Explore/Exploit Acquisition Function
+
+\centering $EI(x) = (\mu(x) - f(x^+) - \xi)\Phi(Z) + \sigma(x)\phi(Z)$
+
+\vspace{15pt} \raggedright  
+The only thing that's changed here is that we're now discounting the expected difference, giving more weight to the expected variance.   
+
+The recommended value for $\xi$ is 0.01.   
+
+
+## Other Potential Acquisition Functions
+
+  #. Upper/Lower Confidence Bound variants
+  #. Cooldown schedules for $\xi$
+  #. Noise corrections in Acquisition Function.
+
+# Loopr-Specific Implementation
+
+## The Skeleton
+
+  #. Create grid of all eligible hyperparameter values. 
+  #. Pick the first `num_tasks + 1` at random. 
+  #. Once there are at least 2 objective function measurements, for each new model
+      #. GP Regress on all known objective measurements.
+      #. If there are pending tasks, treat their GP estimate as real data and refit the GP. (Interpolation/Fantasies)
+      #. Find the current minimum[^min] known objective value
+      #. Calculate expected improvement for all grid points (greedy) below the current objective. 
+      #. Choose the point that maximizes this expected improvement. 
+      #. Repeat until no more iterations. 
+      
+[^min]: Loopr assumes we want the smallest value. Where we want the largest, e.g. AUC, Loopr appends a negative to the target.
+
+## Suggested Improvements
+
+  #. Easy Stuff
+      #. Implement the explore/exploit with a user-configurable $\xi$ that defaults to 0.01
+      #. Implement the noise correction (Brochu et al, 2010)
+  #. Harder Stuff
+      #. Meaningful diagnostics. Specifically visualizing the mean GP, observed points, and the ability to recreate the "story" of the search. 
+      #. User-configurable search strategies (e.g. potentially LCB or cooldown schedule approaches)
+
+# Appendices
+
+## Further Readings
+
+  #. [*A Tutorial on Bayesian Optimization of Expensive Cost Functions, with Application to Active User Modeling and Hierarchical Reinforcement Learning*](https://arxiv.org/pdf/1012.2599.pdf), Brochu et al., 2010
+  #. *Bayesian Data Analysis, 3rd ed*. Gelman et al. 2014
+  #. Machine Learning Series 19.x, mathematicalmonk, [youtube.com](https://www.youtube.com/watch?v=clMbOOz6yR0&list=PLD0F06AA0D2E8FFBA&index=152)
+
+
