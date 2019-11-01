@@ -1,0 +1,439 @@
+\PassOptionsToPackage{unicode=true}{hyperref} % options for packages loaded elsewhere
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[10pt,ignorenonframetext,]{beamer}
+\usepackage{pgfpages}
+\setbeamertemplate{caption}[numbered]
+\setbeamertemplate{caption label separator}{: }
+\setbeamercolor{caption name}{fg=normal text.fg}
+\beamertemplatenavigationsymbolsempty
+% Prevent slide breaks in the middle of a paragraph:
+\widowpenalties 1 10000
+\raggedbottom
+\setbeamertemplate{part page}{
+\centering
+\begin{beamercolorbox}[sep=16pt,center]{part title}
+  \usebeamerfont{part title}\insertpart\par
+\end{beamercolorbox}
+}
+\setbeamertemplate{section page}{
+\centering
+\begin{beamercolorbox}[sep=12pt,center]{part title}
+  \usebeamerfont{section title}\insertsection\par
+\end{beamercolorbox}
+}
+\setbeamertemplate{subsection page}{
+\centering
+\begin{beamercolorbox}[sep=8pt,center]{part title}
+  \usebeamerfont{subsection title}\insertsubsection\par
+\end{beamercolorbox}
+}
+\AtBeginPart{
+  \frame{\partpage}
+}
+\AtBeginSection{
+  \ifbibliography
+  \else
+    \frame{\sectionpage}
+  \fi
+}
+\AtBeginSubsection{
+  \frame{\subsectionpage}
+}
+\usepackage{lmodern}
+\usepackage{amssymb,amsmath}
+\usepackage{ifxetex,ifluatex}
+\usepackage{fixltx2e} % provides \textsubscript
+\ifnum 0\ifxetex 1\fi\ifluatex 1\fi=0 % if pdftex
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provides euro and other symbols
+\else % if luatex or xelatex
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Ligatures=TeX,Scale=MatchLowercase}
+\fi
+\usetheme[]{metropolis}
+% use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+% use microtype if available
+\IfFileExists{microtype.sty}{%
+\usepackage[]{microtype}
+\UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\IfFileExists{parskip.sty}{%
+\usepackage{parskip}
+}{% else
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt plus 2pt minus 1pt}
+}
+\usepackage{hyperref}
+\hypersetup{
+            pdftitle={Bayesian Search},
+            pdfauthor={Christian Tillich},
+            pdfborder={0 0 0},
+            breaklinks=true}
+\urlstyle{same}  % don't use monospace font for urls
+\newif\ifbibliography
+\usepackage{graphicx,grffile}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+\setlength{\emergencystretch}{3em}  % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{0}
+
+% set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+
+
+\title{Bayesian Search}
+\providecommand{\subtitle}[1]{}
+\subtitle{The Definitive Guide}
+\author{Christian Tillich}
+\date{Jan 31, 2019}
+
+\begin{document}
+\frame{\titlepage}
+
+\begin{frame}{Contents}
+\protect\hypertarget{contents}{}
+
+\tableofcontents
+
+\end{frame}
+
+\begin{frame}{Motivation}
+\protect\hypertarget{motivation}{}
+
+\begin{enumerate}
+\tightlist
+\item
+  Bayesian search is complicated process with fairly non-intuitive
+  mathematical reasoning.
+\item
+  The literature on the subject gets dense real, real quick.
+\item
+  We implement a parallelized search, which is not typical and comes
+  with it's own oddities.
+\end{enumerate}
+
+\end{frame}
+
+\hypertarget{gaussian-processes}{%
+\section{Gaussian Processes}\label{gaussian-processes}}
+
+\begin{frame}{Definition}
+\protect\hypertarget{definition}{}
+
+A distribution of \textbf{functions}, not numbers.
+
+\emph{Consider the normal distribution. This distribution tells you the
+probability of getting a specific value of x when you sample it
+randomly. Imagine that instead of pulling out a single number, you
+pulled out a specific function. A guassian process is the distribution
+for the range of functions you could pull out.}
+
+\end{frame}
+
+\begin{frame}{The Linear Example \footnote<.->{5000 lines, sampled at
+  random, with a fixed intercept at 0. This plot is refreshed each time
+  the slides are rebuilt.}}
+\protect\hypertarget{the-linear-example-linear}{}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\centering
+
+\(F = \beta X\) \hspace{10pt} \(\beta \sim N(0,1)\) \vspace{10pt}\\
+or, more typically \vspace{10pt}\\
+\(F \sim N(0, x_1^Tx_2)\)
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\begin{flushright}\includegraphics[width=125pt,height=100pt]{bayesian_search_files/figure-beamer/linear_example-1} \end{flushright}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}[fragile]{The Common Covariance Choice \footnote<.->{4
+  draws of a gaussian process with squared exponential covariance. This
+  plot is refreshed each time the slides are rebuilt.}}
+\protect\hypertarget{the-common-covariance-choice-squared_exp}{}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\(F \sim N(0, e^{k||x_1 - x_2||^2})\)
+
+\vspace{10pt}
+
+The most common choice of covariance, and the default for
+\texttt{sklearn}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\includegraphics[width=125pt,height=100pt]{bayesian_search_files/figure-beamer/squared_exp-1}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\hypertarget{gaussian-process-regression}{%
+\section{Gaussian Process
+Regression}\label{gaussian-process-regression}}
+
+\begin{frame}{Definition}
+\protect\hypertarget{definition-1}{}
+
+An algorithm to best fit a Gaussian Process through a series of known
+data points.
+
+\end{frame}
+
+\begin{frame}{The Solution to GP Regression.}
+\protect\hypertarget{the-solution-to-gp-regression.}{}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\begin{enumerate}
+\tightlist
+\item
+  \ldots{}is not obvious. See the \emph{Further Readings} section for
+  detailed proofs.
+\item
+  \ldots{}gives us confidence intervals.
+
+  \begin{enumerate}
+  \tightlist
+  \item
+    Because GPs define a distribution over all possible functions, we
+    get ranges of certainty as well as means.
+  \item
+    Using this uncertainty is a big part of Bayesian Search.
+  \end{enumerate}
+\end{enumerate}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\centering \includegraphics[width=2.08333in,height=\textheight]{https://i.stack.imgur.com/1R29J.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}[fragile]{Python's GaussianProcess}
+\protect\hypertarget{pythons-gaussianprocess}{}
+
+\begin{enumerate}
+\tightlist
+\item
+  We use \texttt{sklearn.gaussian\_process.GaussianProcess} to do the
+  regression.
+\item
+  By default, \texttt{corr} is squared-exponential and the mean of f(x),
+  \texttt{regr}, is constant 0.
+\item
+  Data automatically normalizes.
+\item
+  Has various other options for optimization, krigging, smoothing, etc.
+\item
+  Note that currently this method is deprecated
+\end{enumerate}
+
+\end{frame}
+
+\hypertarget{bayesian-search}{%
+\section{Bayesian Search}\label{bayesian-search}}
+
+\begin{frame}{Definition}
+\protect\hypertarget{definition-2}{}
+
+A process where we exploit the mean and variance of Gaussian Process
+Regression to define regions of likely improvement to guide our search
+for the optimal value of a variable.
+
+\end{frame}
+
+\begin{frame}{The Algorithm}
+\protect\hypertarget{the-algorithm}{}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\footnotesize
+
+\begin{enumerate}
+\tightlist
+\item
+  Fit a Gaussian Process to all observed values of your objective
+  function (e.g.~AUC)
+\item
+  Using an acquisition function that you've specified, evaluate expected
+  improvement at all possible candidates.
+\item
+  Choose the candidate that maximizes expected improvement over your
+  current best candidate.
+\item
+  Sample the objective function at the new candidate.
+\item
+  Append your observed value.
+\item
+  Repeat at 1 until there are no more iterations.\\
+\end{enumerate}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\includegraphics{https://storage.googleapis.com/gweb-cloudblog-publish/images/hyperparameter-32-b.max-600x600.png}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\begin{frame}{The Greedy Acquisition Function}
+\protect\hypertarget{the-greedy-acquisition-function}{}
+
+\centering \(EI(x) = (\mu(x) - f(x^+))\Phi(Z) + \sigma(x)\phi(Z)\)
+
+\vspace{15pt} \raggedright
+
+\(\mu\) is the mean of the Gaussian Process\\
+\(\sigma\) is the standard deviation of the Gaussian Process\\
+\(f(x^+)\) is the currently observed maximum value.\\
+Z is the expected improvement, transformed to a z-score\\
+\(\Phi\) is the CDF of Z\\
+\(\phi\) is the PDF of Z
+
+\end{frame}
+
+\begin{frame}{Explore/Exploit Acquisition Function}
+\protect\hypertarget{exploreexploit-acquisition-function}{}
+
+\centering \(EI(x) = (\mu(x) - f(x^+) - \xi)\Phi(Z) + \sigma(x)\phi(Z)\)
+
+\vspace{15pt} \raggedright
+
+The only thing that's changed here is that we're now discounting the
+expected difference, giving more weight to the expected variance.
+
+The recommended value for \(\xi\) is 0.01.
+
+\end{frame}
+
+\begin{frame}{Other Potential Acquisition Functions}
+\protect\hypertarget{other-potential-acquisition-functions}{}
+
+\begin{enumerate}
+\tightlist
+\item
+  Upper/Lower Confidence Bound variants
+\item
+  Cooldown schedules for \(\xi\)
+\item
+  Noise corrections in Acquisition Function.
+\end{enumerate}
+
+\end{frame}
+
+\hypertarget{loopr-specific-implementation}{%
+\section{Loopr-Specific
+Implementation}\label{loopr-specific-implementation}}
+
+\begin{frame}[fragile]{The Skeleton}
+\protect\hypertarget{the-skeleton}{}
+
+\begin{enumerate}
+\tightlist
+\item
+  Create grid of all eligible hyperparameter values.
+\item
+  Pick the first \texttt{num\_tasks\ +\ 1} at random.
+\item
+  Once there are at least 2 objective function measurements, for each
+  new model
+
+  \begin{enumerate}
+  \tightlist
+  \item
+    GP Regress on all known objective measurements.
+  \item
+    If there are pending tasks, treat their GP estimate as real data and
+    refit the GP. (Interpolation/Fantasies)
+  \item
+    Find the current minimum\footnote<.->{Loopr assumes we want the
+      smallest value. Where we want the largest, e.g.~AUC, Loopr appends
+      a negative to the target.} known objective value
+  \item
+    Calculate expected improvement for all grid points (greedy) below
+    the current objective.
+  \item
+    Choose the point that maximizes this expected improvement.
+  \item
+    Repeat until no more iterations.
+  \end{enumerate}
+\end{enumerate}
+
+\end{frame}
+
+\begin{frame}{Suggested Improvements}
+\protect\hypertarget{suggested-improvements}{}
+
+\begin{enumerate}
+\tightlist
+\item
+  Easy Stuff
+
+  \begin{enumerate}
+  \tightlist
+  \item
+    Implement the explore/exploit with a user-configurable \(\xi\) that
+    defaults to 0.01
+  \item
+    Implement the noise correction (Brochu et al, 2010)
+  \end{enumerate}
+\item
+  Harder Stuff
+
+  \begin{enumerate}
+  \tightlist
+  \item
+    Meaningful diagnostics. Specifically visualizing the mean GP,
+    observed points, and the ability to recreate the ``story'' of the
+    search.
+  \item
+    User-configurable search strategies (e.g.~potentially LCB or
+    cooldown schedule approaches)
+  \end{enumerate}
+\end{enumerate}
+
+\end{frame}
+
+\hypertarget{appendices}{%
+\section{Appendices}\label{appendices}}
+
+\begin{frame}{Further Readings}
+\protect\hypertarget{further-readings}{}
+
+\begin{enumerate}
+\tightlist
+\item
+  \href{https://arxiv.org/pdf/1012.2599.pdf}{\emph{A Tutorial on
+  Bayesian Optimization of Expensive Cost Functions, with Application to
+  Active User Modeling and Hierarchical Reinforcement Learning}}, Brochu
+  et al., 2010
+\item
+  \emph{Bayesian Data Analysis, 3rd ed}. Gelman et al.~2014
+\item
+  Machine Learning Series 19.x, mathematicalmonk,
+  \href{https://www.youtube.com/watch?v=clMbOOz6yR0\&list=PLD0F06AA0D2E8FFBA\&index=152}{youtube.com}
+\end{enumerate}
+
+\end{frame}
+
+\end{document}

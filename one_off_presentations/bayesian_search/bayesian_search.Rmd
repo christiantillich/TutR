@@ -12,6 +12,8 @@ output:
 ---
 
 ```{r setup, include=FALSE}
+library(ggplot2)
+library(dplyr)
 knitr::opts_chunk$set(
     echo = FALSE
   , out.height = "100pt"
